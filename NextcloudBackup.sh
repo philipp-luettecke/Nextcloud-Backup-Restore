@@ -23,10 +23,15 @@ backupMainDir=$1
 
 if [ -z "$backupMainDir" ]; then
 	# TODO: The directory where you store the Nextcloud backups (when not specified by args)
-    backupMainDir='/media/hdd/nextcloud_backup'
+    backupMainDir='/srv/backups/nextcloud_backup'
 fi
 
 echo "Backup directory: $backupMainDir"
+
+if [ -f .env ]
+then
+  export $(cat .env | xargs)
+fi
 
 currentDate=$(date +"%Y%m%d_%H%M%S")
 
@@ -34,18 +39,21 @@ currentDate=$(date +"%Y%m%d_%H%M%S")
 backupdir="${backupMainDir}/${currentDate}/"
 
 # TODO: The directory of your Nextcloud installation (this is a directory under your web root)
-nextcloudFileDir='/var/www/nextcloud'
+nextcloudFileDir="$NEXTCLOUD_ROOT/files"
 
 # TODO: The directory of your Nextcloud data directory (outside the Nextcloud file directory)
 # If your data directory is located under Nextcloud's file directory (somewhere in the web root), the data directory should not be a separate part of the backup
-nextcloudDataDir='/var/nextcloud_data'
+nextcloudDataDir="$NEXTCLOUD_ROOT"
 
 # TODO: The directory of your Nextcloud's local external storage.
 # Uncomment if you use local external storage.
 #nextcloudLocalExternalDataDir='/var/nextcloud_external_data'
 
-# TODO: The service name of the web server. Used to start/stop web server (e.g. 'systemctl start <webserverServiceName>')
-webserverServiceName='nginx'
+# TODO: The container name of nextcloud. Used to start/stop nextcloud server (e.g. 'docker start <nextcloudContainerName>')
+nextcloudContainerName='nextcloud'
+
+# TODO: The container name of the database used by nextcloud.
+databaseContainerName='nextcloud-mariadb'
 
 # TODO: Your web server user
 webserverUser='www-data'
@@ -54,16 +62,16 @@ webserverUser='www-data'
 databaseSystem='mariadb'
 
 # TODO: Your Nextcloud database name
-nextcloudDatabase='nextcloud_db'
+nextcloudDatabase='nextcloud'
 
 # TODO: Your Nextcloud database user
-dbUser='nextcloud_db_user'
+dbUser="$MYSQL_USER"
 
 # TODO: The password of the Nextcloud database user
-dbPassword='mYpAsSw0rd'
+dbPassword="$MYSQL_PASSWORD"
 
 # TODO: The maximum number of backups to keep (when set to 0, all backups are kept)
-maxNrOfBackups=0
+maxNrOfBackups=8
 
 # File names for backup files
 # If you prefer other file names, you'll also have to change the NextcloudRestore.sh script.
@@ -80,7 +88,7 @@ errorecho() { cat <<< "$@" 1>&2; }
 
 function DisableMaintenanceMode() {
 	echo "Switching off maintenance mode..."
-	sudo -u "${webserverUser}" php ${nextcloudFileDir}/occ maintenance:mode --off
+	sudo docker exec -it -u www-data nextcloud php occ maintenance:mode --off
 	echo "Done"
 	echo
 }
@@ -89,7 +97,12 @@ function DisableMaintenanceMode() {
 trap CtrlC INT
 
 function CtrlC() {
-	read -p "Backup cancelled. Keep maintenance mode? [y/n] " -n 1 -r
+        echo "Backup cancelled. Restarting Nextcloud Container..."
+	docker start "${nextcloudContainerName}"
+	echo "Done"
+	echo
+
+	read -p "Keep maintenance mode? [y/n] " -n 1 -r
 	echo
 
 	if ! [[ $REPLY =~ ^[Yy]$ ]]
@@ -126,7 +139,7 @@ fi
 # Set maintenance mode
 #
 echo "Set maintenance mode for Nextcloud..."
-sudo -u "${webserverUser}" php ${nextcloudFileDir}/occ maintenance:mode --on
+docker exec -it -u www-data nextcloud php occ maintenance:mode --on
 echo "Done"
 echo
 
@@ -134,7 +147,7 @@ echo
 # Stop web server
 #
 echo "Stopping web server..."
-systemctl stop "${webserverServiceName}"
+docker stop "${nextcloudContainerName}"
 echo "Done"
 echo
 
@@ -142,7 +155,8 @@ echo
 # Backup file directory
 #
 echo "Creating backup of Nextcloud file directory..."
-tar -cpzf "${backupdir}/${fileNameBackupFileDir}" -C "${nextcloudFileDir}" .
+#tar -cpzf "${backupdir}/${fileNameBackupFileDir}" -C "${nextcloudFileDir}" .
+tar cf - -C "${nextcloudFileDir}" . -P | pv -s $(du -sb "${nextcloudFileDir}" | awk '{print $1}') | gzip > "${backupdir}/${fileNameBackupFileDir}"
 echo "Done"
 echo
 
@@ -150,7 +164,8 @@ echo
 # Backup data directory
 #
 echo "Creating backup of Nextcloud data directory..."
-tar -cpzf "${backupdir}/${fileNameBackupDataDir}"  -C "${nextcloudDataDir}" .
+#tar --exclude="${nextcloudFileDir}" --exclude="${nextcloudDataDir}/Nextcloud-Backup-Restore" -cpzf "${backupdir}/${fileNameBackupDataDir}"  -C "${nextcloudDataDir}" .
+tar --exclude="${nextcloudFileDir}" --exclude="${nextcloudDataDir}/Nextcloud-Backup-Restore" cf - -C "${nextcloudFileDir}" . -P | pv -s $(du -sb "${nextcloudFileDir}" | awk '{print $1}') | gzip > "${backupdir}/${fileNameBackupFileDir}"
 echo "Done"
 echo
 
@@ -167,11 +182,11 @@ echo
 if [ "${databaseSystem,,}" = "mysql" ] || [ "${databaseSystem,,}" = "mariadb" ]; then
   	echo "Backup Nextcloud database (MySQL/MariaDB)..."
 
-	if ! [ -x "$(command -v mysqldump)" ]; then
+	if ! [ -z "$(docker exec -it ${databaseContainerName} mysqldump -V)" ]; then
 		errorecho "ERROR: MySQL/MariaDB not installed (command mysqldump not found)."
 		errorecho "ERROR: No backup of database possible!"
 	else
-		mysqldump --single-transaction -h localhost -u "${dbUser}" -p"${dbPassword}" "${nextcloudDatabase}" > "${backupdir}/${fileNameBackupDb}"
+		docker exec -it "${mariaDBContainerName}" mysqldump --single-transaction -h localhost -u"${dbUser}" -p"${dbPassword}" "${nextcloudDatabase}" > "${backupdir}/${fileNameBackupDb}"
 	fi
 
 	echo "Done"
@@ -179,13 +194,13 @@ if [ "${databaseSystem,,}" = "mysql" ] || [ "${databaseSystem,,}" = "mariadb" ];
 elif [ "${databaseSystem,,}" = "postgresql" ]; then
 	echo "Backup Nextcloud database (PostgreSQL)..."
 
-	if ! [ -x "$(command -v pg_dump)" ]; then
+	if ! [ -z "$(docker exec -it ${databaseContainerName} pg_dump --help)" ]; then
 		errorecho "ERROR:PostgreSQL not installed (command pg_dump not found)."
 		errorecho "ERROR: No backup of database possible!"
 	else
 		PGPASSWORD="${dbPassword}" pg_dump "${nextcloudDatabase}" -h localhost -U "${dbUser}" -f "${backupdir}/${fileNameBackupDb}"
 	fi
-	
+
 	echo "Done"
 	echo
 fi
@@ -194,7 +209,7 @@ fi
 # Start web server
 #
 echo "Starting web server..."
-systemctl start "${webserverServiceName}"
+docker start "${nextcloudContainerName}"
 echo "Done"
 echo
 
