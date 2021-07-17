@@ -24,26 +24,31 @@ backupMainDir=$2
 
 if [ -z "$backupMainDir" ]; then
 	# TODO: The directory where you store the Nextcloud backups (when not specified by args)
-    backupMainDir='/media/hdd/nextcloud_backup'
+    backupMainDir='/srv/backups/nextcloud_backup'
 fi
 
 echo "Backup directory: $backupMainDir"
 
+if [ -f .env ]
+then
+  export $(cat .env | xargs)
+fi
+
 currentRestoreDir="${backupMainDir}/${restore}"
 
 # TODO: The directory of your Nextcloud installation (this is a directory under your web root)
-nextcloudFileDir='/var/www/nextcloud'
+nextcloudFileDir="$NEXTCLOUD_ROOT/files"
 
 # TODO: The directory of your Nextcloud data directory (outside the Nextcloud file directory)
 # If your data directory is located under Nextcloud's file directory (somewhere in the web root), the data directory should not be restored separately
-nextcloudDataDir='/var/nextcloud_data'
+nextcloudDataDir="$NEXTCLOUD_ROOT"
 
 # TODO: The directory of your Nextcloud's local external storage.
 # Uncomment if you use local external storage.
 #nextcloudLocalExternalDataDir='/var/nextcloud_external_data'
 
 # TODO: The service name of the web server. Used to start/stop web server (e.g. 'systemctl start <webserverServiceName>')
-webserverServiceName='nginx'
+nextcloudContainerName='nextcloud'
 
 # TODO: Your web server user
 webserverUser='www-data'
@@ -52,13 +57,13 @@ webserverUser='www-data'
 databaseSystem='mariadb'
 
 # TODO: Your Nextcloud database name
-nextcloudDatabase='nextcloud_db'
+nextcloudDatabase='nextcloud'
 
 # TODO: Your Nextcloud database user
-dbUser='nextcloud_db_user'
+dbUser="$MYSQL_USER"
 
 # TODO: The password of the Nextcloud database user
-dbPassword='mYpAsSw0rd'
+dbPassword="$MYSQL_PASSWORD"
 
 # File names for backup files
 # If you prefer other file names, you'll also have to change the NextcloudBackup.sh script.
@@ -105,7 +110,7 @@ fi
 # Check if the commands for restoring the database are available
 #
 if [ "${databaseSystem,,}" = "mysql" ] || [ "${databaseSystem,,}" = "mariadb" ]; then
-    if ! [ -x "$(command -v mysql)" ]; then
+    if [ -z "$(docker exec -it ${databaseContainerName} mysql -V)" ]; then
 		errorecho "ERROR: MySQL/MariaDB not installed (command mysql not found)."
 		errorecho "ERROR: No restore of database possible!"
         errorecho "Cancel restore"
@@ -124,15 +129,16 @@ fi
 # Set maintenance mode
 #
 echo "Set maintenance mode for Nextcloud..."
-sudo -u "${webserverUser}" php ${nextcloudFileDir}/occ maintenance:mode --on
+docker exec -it -u www-data nextcloud php occ maintenance:mode --on
 echo "Done"
 echo
 
 #
 # Stop web server
 #
-echo "Stopping web server..."
-systemctl stop "${webserverServiceName}"
+echo "Stopping web server and database..."
+docker stop "${nextcloudContainerName}"
+docker stop "${databaseContainerName}"
 echo "Done"
 echo
 
@@ -188,12 +194,18 @@ echo
 #
 # Restore database
 #
+echo "Restarting database..."
+docker start "${databaseContainerName}"
+echo "Done"
+echo
+
 echo "Dropping old Nextcloud DB..."
 
 if [ "${databaseSystem,,}" = "mysql" ] || [ "${databaseSystem,,}" = "mariadb" ]; then
-    mysql -h localhost -u "${dbUser}" -p"${dbPassword}" -e "DROP DATABASE ${nextcloudDatabase}"
+    docker exec -it ${databaseContainerName} mysql -h localhost -u "${dbUser}" -p"${dbPassword}" -e "DROP DATABASE
+    ${nextcloudDatabase}"
 elif [ "${databaseSystem,,}" = "postgresql" ]; then
-	sudo -u postgres psql -c "DROP DATABASE ${nextcloudDatabase};"
+	docker exec -it -u postgres ${databaseContainerName} psql -c "DROP DATABASE ${nextcloudDatabase};"
 fi
 
 echo "Done"
@@ -203,11 +215,12 @@ echo "Creating new DB for Nextcloud..."
 
 if [ "${databaseSystem,,}" = "mysql" ] || [ "${databaseSystem,,}" = "mariadb" ]; then
     # Use this if the databse from the backup uses UTF8 with multibyte support (e.g. for emoijs in filenames):
-    mysql -h localhost -u "${dbUser}" -p"${dbPassword}" -e "CREATE DATABASE ${nextcloudDatabase} CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci"
+    docker exec -it ${databaseContainerName} mysql -h localhost -u "${dbUser}" -p"${dbPassword}" -e "CREATE DATABASE
+    ${nextcloudDatabase} CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci"
     # TODO: Use this if the database from the backup DOES NOT use UTF8 with multibyte support (e.g. for emoijs in filenames):
     #mysql -h localhost -u "${dbUser}" -p"${dbPassword}" -e "CREATE DATABASE ${nextcloudDatabase}"
 elif [ "${databaseSystem,,}" = "postgresql" ]; then
-    sudo -u postgres psql -c "CREATE DATABASE ${nextcloudDatabase} WITH OWNER ${dbUser} TEMPLATE template0 ENCODING \"UTF8\";"
+    docker exec -it -u postgres ${databaseContainerName} psql -c "CREATE DATABASE ${nextcloudDatabase} WITH OWNER ${dbUser} TEMPLATE template0 ENCODING \"UTF8\";"
 fi
 
 echo "Done"
@@ -216,9 +229,10 @@ echo
 echo "Restoring backup DB..."
 
 if [ "${databaseSystem,,}" = "mysql" ] || [ "${databaseSystem,,}" = "mariadb" ]; then
-	mysql -h localhost -u "${dbUser}" -p"${dbPassword}" "${nextcloudDatabase}" < "${currentRestoreDir}/${fileNameBackupDb}"
+	docker exec -it ${databaseContainerName} mysql -h localhost -u "${dbUser}" -p"${dbPassword}" "${nextcloudDatabase}"
+	 < "${currentRestoreDir}/${fileNameBackupDb}"
 elif [ "${databaseSystem,,}" = "postgresql" ]; then
-	sudo -u postgres psql "${nextcloudDatabase}" < "${currentRestoreDir}/${fileNameBackupDb}"
+	docker exec -it -u postgres ${databaseContainerName} psql "${nextcloudDatabase}" < "${currentRestoreDir}/${fileNameBackupDb}"
 fi
 
 echo "Done"
@@ -228,7 +242,7 @@ echo
 # Start web server
 #
 echo "Starting web server..."
-systemctl start "${webserverServiceName}"
+docker start "${nextcloudContainerName}"
 echo "Done"
 echo
 
@@ -247,7 +261,7 @@ echo
 # Update the system data-fingerprint (see https://docs.nextcloud.com/server/16/admin_manual/configuration_server/occ_command.html#maintenance-commands-label)
 #
 echo "Updating the system data-fingerprint..."
-sudo -u "${webserverUser}" php ${nextcloudFileDir}/occ maintenance:data-fingerprint
+docker exec -it -u www-data nextcloud php occ maintenance:data-fingerprint
 echo "Done"
 echo
 
@@ -255,7 +269,7 @@ echo
 # Disbale maintenance mode
 #
 echo "Switching off maintenance mode..."
-sudo -u "${webserverUser}" php ${nextcloudFileDir}/occ maintenance:mode --off
+docker exec -it -u www-data nextcloud php occ maintenance:mode --off
 echo "Done"
 echo
 
