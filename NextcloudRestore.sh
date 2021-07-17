@@ -37,7 +37,7 @@ fi
 currentRestoreDir="${backupMainDir}/${restore}"
 
 # TODO: The directory of your Nextcloud installation (this is a directory under your web root)
-nextcloudFileDir="$NEXTCLOUD_ROOT/files"
+nextcloudFileDir="$NEXTCLOUD_ROOT"
 
 # TODO: The directory of your Nextcloud data directory (outside the Nextcloud file directory)
 # If your data directory is located under Nextcloud's file directory (somewhere in the web root), the data directory should not be restored separately
@@ -154,11 +154,11 @@ echo "Done"
 echo
 
 # Data directory
-echo "Deleting old Nextcloud data directory..."
-rm -r "${nextcloudDataDir}"
-mkdir -p "${nextcloudDataDir}"
-echo "Done"
-echo
+#echo "Deleting old Nextcloud data directory..."
+#rm -r "${nextcloudDataDir}"
+#mkdir -p "${nextcloudDataDir}"
+#echo "Done"
+#echo
 
 # Local external storage
 # TOOD: Uncomment if you use local external storage
@@ -179,10 +179,10 @@ echo "Done"
 echo
 
 # Data directory
-echo "Restoring Nextcloud data directory..."
-tar -xmpzf "${currentRestoreDir}/${fileNameBackupDataDir}" -C "${nextcloudDataDir}"
-echo "Done"
-echo
+#echo "Restoring Nextcloud data directory..."
+#tar -xmpzf "${currentRestoreDir}/${fileNameBackupDataDir}" -C "${nextcloudDataDir}"
+#echo "Done"
+#echo
 
 # Local external storage
 # TOOD: Uncomment if you use local external storage

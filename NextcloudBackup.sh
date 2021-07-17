@@ -39,7 +39,7 @@ currentDate=$(date +"%Y%m%d_%H%M%S")
 backupdir="${backupMainDir}/${currentDate}/"
 
 # TODO: The directory of your Nextcloud installation (this is a directory under your web root)
-nextcloudFileDir="$NEXTCLOUD_ROOT/files"
+nextcloudFileDir="$NEXTCLOUD_ROOT"
 
 # TODO: The directory of your Nextcloud data directory (outside the Nextcloud file directory)
 # If your data directory is located under Nextcloud's file directory (somewhere in the web root), the data directory should not be a separate part of the backup
@@ -163,11 +163,12 @@ echo
 #
 # Backup data directory
 #
-echo "Creating backup of Nextcloud data directory..."
+#echo "Creating backup of Nextcloud data directory..."
 #tar --exclude="${nextcloudFileDir}" --exclude="${nextcloudDataDir}/Nextcloud-Backup-Restore" -cpzf "${backupdir}/${fileNameBackupDataDir}"  -C "${nextcloudDataDir}" .
-tar --exclude="${nextcloudFileDir}" --exclude="${nextcloudDataDir}/Nextcloud-Backup-Restore" cf - -C "${nextcloudFileDir}" . -P | pv -s $(du -sb "${nextcloudFileDir}" | awk '{print $1}') | gzip > "${backupdir}/${fileNameBackupFileDir}"
-echo "Done"
-echo
+#tar --exclude="${nextcloudFileDir}" --exclude="${nextcloudDataDir}/Nextcloud-Backup-Restore" cf - -C
+# "${nextcloudFileDir}" . -P | pv -s $(du -sb "${nextcloudFileDir}" | awk '{print $1}') | gzip > "${backupdir}/${fileNameBackupFileDir}"
+#echo "Done"
+#echo
 
 # Backup local external storage.
 # Uncomment if you use local external storage
